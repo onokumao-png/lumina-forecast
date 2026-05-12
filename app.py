@@ -104,32 +104,35 @@ def generate_sample_data(n: int = 300) -> pd.DataFrame:
         prob = np.clip(prob, 0.1, 0.9)
         results.append(np.random.binomial(1, prob))
 
-    # エリアごとの代表都市座標（リアルな現場散布のためノイズを加える）
+    # エリアごとの代表都市座標と都市名
     other_cities = [
-        (35.6050, 140.1233),  # 千葉
-        (35.8617, 139.6455),  # さいたま
-        (34.9757, 138.3827),  # 静岡
-        (35.3628, 138.7307),  # 山梨
-        (36.3912, 139.0608),  # 群馬
-        (36.5657, 136.6565),  # 金沢
-        (35.9056, 139.3797),  # 熊谷
-        (35.0116, 135.7681),  # 京都
-        (34.6937, 135.5023),  # 大阪
-        (35.1815, 136.9066),  # 名古屋
+        (35.6050, 140.1233, "千葉市"),
+        (35.8617, 139.6455, "さいたま市"),
+        (34.9757, 138.3827, "静岡市"),
+        (35.3628, 138.7307, "甲府市"),
+        (36.3912, 139.0608, "前橋市"),
+        (36.5657, 136.6565, "金沢市"),
+        (35.9056, 139.3797, "熊谷市"),
+        (35.0116, 135.7681, "京都市"),
+        (34.6937, 135.5023, "大阪市"),
+        (35.1815, 136.9066, "名古屋市"),
     ]
 
-    lats, lons = [], []
+    lats, lons, cities = [], [], []
     for area in areas:
         if area == "東京":
             lat = 35.6812 + np.random.normal(0, 0.06)
             lon = 139.7671 + np.random.normal(0, 0.07)
+            cities.append("東京都")
         elif area == "神奈川":
             lat = 35.4478 + np.random.normal(0, 0.07)
             lon = 139.6425 + np.random.normal(0, 0.07)
+            cities.append("神奈川県")
         else:
             city = other_cities[np.random.randint(len(other_cities))]
             lat = city[0] + np.random.normal(0, 0.12)
             lon = city[1] + np.random.normal(0, 0.12)
+            cities.append(city[2])
         lats.append(lat)
         lons.append(lon)
 
@@ -138,6 +141,7 @@ def generate_sample_data(n: int = 300) -> pd.DataFrame:
         "amount": amounts,
         "category": categories,
         "area": areas,
+        "city": cities,
         "result": results,
         "lat": lats,
         "lon": lons,
@@ -262,11 +266,12 @@ with st.sidebar:
 # タブ構成
 # ─────────────────────────────────────────
 
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 ダッシュボード",
     "🤖 モデル評価",
     "🔮 受注確率予測",
     "📋 データ確認",
+    "🧠 エージェント",
 ])
 
 # ─────────────────────────────────────────
@@ -305,83 +310,63 @@ with tab1:
     elif map_filter == "失注のみ":
         df_map = df_map[df_map["result"] == 0]
 
-    # アークの色（受注=青緑、失注=オレンジ）
-    df_map["color_r"] = df_map["result"].map({1: 0,   0: 255})
-    df_map["color_g"] = df_map["result"].map({1: 200, 0: 120})
-    df_map["color_b"] = df_map["result"].map({1: 255, 0: 0})
-    df_map["alpha"]   = 180
-    # 金額に比例してアーク幅を調整（最小1、最大8）
-    df_map["arc_width"] = (
-        (df_map["amount"] / df_map["amount"].max() * 7 + 1).clip(1, 8)
-    )
-    # tooltip用テキスト
+    # 色設定（受注=青、失注=オレンジ）
+    df_map["color"] = df_map["result"].map({1: "royalblue", 0: "orangered"})
+    df_map["label"] = df_map["result"].map({1: "受注✅", 0: "失注❌"})
     df_map["tooltip"] = df_map.apply(
-        lambda r: f"{r['category']} / {r['area']} / ¥{r['amount']:,} / {'受注✅' if r['result'] else '失注❌'}",
+        lambda r: f"{r['label']}<br>{r['city']} / {r['category']}<br>¥{r['amount']:,}",
         axis=1,
     )
 
-    # 会社所在地レイヤー（大きな黄色マーカー）
-    company_df = pd.DataFrame([{
-        "lat": COMPANY_LAT, "lon": COMPANY_LON, "label": COMPANY_NAME
-    }])
+    fig_map = go.Figure()
 
-    arc_layer = pdk.Layer(
-        "ArcLayer",
-        data=df_map,
-        get_source_position=[COMPANY_LON, COMPANY_LAT],   # 会社（固定）
-        get_target_position=["lon", "lat"],                # 現場
-        get_source_color=[255, 220, 0, 200],               # 黄色（会社側）
-        get_target_color=["color_r", "color_g", "color_b", "alpha"],
-        get_width="arc_width",
-        pickable=True,
-        auto_highlight=True,
-    )
+    # 会社→現場のライン
+    for _, row in df_map.iterrows():
+        fig_map.add_trace(go.Scattermapbox(
+            lon=[COMPANY_LON, row["lon"]],
+            lat=[COMPANY_LAT, row["lat"]],
+            mode="lines",
+            line=dict(width=1.5, color=row["color"]),
+            opacity=0.45,
+            showlegend=False,
+            hoverinfo="skip",
+        ))
 
-    scatter_layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=df_map,
-        get_position=["lon", "lat"],
-        get_fill_color=["color_r", "color_g", "color_b", 220],
-        get_radius=2500,
-        pickable=True,
-    )
+    # 現場マーカー
+    fig_map.add_trace(go.Scattermapbox(
+        lon=df_map["lon"],
+        lat=df_map["lat"],
+        mode="markers",
+        marker=dict(size=8, color=df_map["color"], opacity=0.85),
+        text=df_map["tooltip"],
+        hovertemplate="%{text}<extra></extra>",
+        showlegend=False,
+    ))
 
-    company_layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=company_df,
-        get_position=["lon", "lat"],
-        get_fill_color=[255, 220, 0, 255],
-        get_radius=8000,
-        pickable=True,
-    )
+    # 会社マーカー
+    fig_map.add_trace(go.Scattermapbox(
+        lon=[COMPANY_LON],
+        lat=[COMPANY_LAT],
+        mode="markers+text",
+        marker=dict(size=18, color="gold"),
+        text=["🏢 LuminaTech"],
+        textposition="top right",
+        hovertemplate="LuminaTech 横浜本社<extra></extra>",
+        showlegend=False,
+    ))
 
-    company_text_layer = pdk.Layer(
-        "TextLayer",
-        data=company_df,
-        get_position=["lon", "lat"],
-        get_text="label",
-        get_size=14,
-        get_color=[255, 255, 255, 255],
-        get_alignment_baseline="'bottom'",
-    )
-
-    view = pdk.ViewState(
-        latitude=36.2,
-        longitude=138.8,
-        zoom=5.8,
-        pitch=45,
-        bearing=-10,
-    )
-
-    st.pydeck_chart(
-        pdk.Deck(
-            layers=[arc_layer, scatter_layer, company_layer, company_text_layer],
-            initial_view_state=view,
-            map_style="mapbox://styles/mapbox/dark-v10",
-            tooltip={"text": "{tooltip}"},
+    fig_map.update_layout(
+        mapbox=dict(
+            style="open-street-map",
+            center=dict(lat=36.5, lon=138.5),
+            zoom=5.2,
         ),
+        margin=dict(l=0, r=0, t=0, b=0),
         height=520,
+        paper_bgcolor="rgba(0,0,0,0)",
     )
+
+    st.plotly_chart(fig_map, use_container_width=True, config={"scrollZoom": True})
 
     col_leg1, col_leg2, col_leg3 = st.columns(3)
     col_leg1.info(f"🏢 会社: {COMPANY_NAME}")
@@ -711,8 +696,8 @@ with tab4:
     )
     df_filtered = df_raw[df_raw["category"].isin(filter_cat)]
 
-    # 表示
-    df_display = df_filtered.copy()
+    # 表示（lat/lon は表示しない）
+    df_display = df_filtered[["date", "amount", "category", "area", "result"]].copy()
     df_display["result"] = df_display["result"].map({1: "✅ 受注", 0: "❌ 失注"})
     df_display["amount"] = df_display["amount"].apply(lambda x: f"¥{x:,}")
     df_display.columns = ["見積日", "見積金額", "工事種別", "エリア", "受注結果"]
@@ -733,4 +718,117 @@ with tab4:
     st.dataframe(
         df_raw[["amount"]].describe().map(lambda x: f"{x:,.0f}"),
         use_container_width=True,
+    )
+
+
+# ─────────────────────────────────────────
+# タブ5: エージェント
+# ─────────────────────────────────────────
+
+with tab5:
+    st.subheader("🧠 AIエージェント（受注分析アシスタント）")
+    st.caption("データに基づいて受注傾向・改善提案を自然言語で質問できます。")
+
+    # チャット履歴の初期化
+    if "agent_messages" not in st.session_state:
+        st.session_state.agent_messages = [
+            {"role": "assistant", "content": (
+                "こんにちは！LuminaTech 受注分析アシスタントです。\n\n"
+                "例えば以下のような質問ができます：\n"
+                "- 受注率が高い工事種別を教えて\n"
+                "- 今月の受注傾向は？\n"
+                "- 見積金額と受注率の関係は？"
+            )}
+        ]
+
+    # チャット履歴を表示
+    for msg in st.session_state.agent_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # ユーザー入力
+    if prompt := st.chat_input("受注データについて質問してください..."):
+        st.session_state.agent_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # データを要約してコンテキストを作成
+        total = len(df_raw)
+        win_rate = df_raw["result"].mean() * 100
+        avg_amount = df_raw["amount"].mean()
+        top_cat = df_raw.groupby("category")["result"].mean().idxmax()
+        top_area = df_raw.groupby("area")["result"].mean().idxmax()
+
+        context = (
+            f"【現在のデータ概要】\n"
+            f"- 総レコード数: {total:,}件\n"
+            f"- 全体受注率: {win_rate:.1f}%\n"
+            f"- 平均見積金額: ¥{avg_amount:,.0f}\n"
+            f"- 受注率トップ工事種別: {top_cat}\n"
+            f"- 受注率トップエリア: {top_area}\n"
+        )
+
+        # 簡易ルールベース回答（API不要）
+        answer = _agent_answer(prompt, context, df_raw)
+
+        with st.chat_message("assistant"):
+            st.markdown(answer)
+        st.session_state.agent_messages.append({"role": "assistant", "content": answer})
+
+    # 会話リセット
+    if st.button("🔄 会話をリセット", key="reset_chat"):
+        st.session_state.agent_messages = []
+        st.rerun()
+
+
+def _agent_answer(prompt: str, context: str, df) -> str:
+    """
+    ルールベースの簡易エージェント回答。
+    API連携なしでデータから直接回答を生成する。
+    """
+    p = prompt.lower()
+
+    win_rate = df["result"].mean() * 100
+    cat_rates = df.groupby("category")["result"].mean().sort_values(ascending=False)
+    area_rates = df.groupby("area")["result"].mean().sort_values(ascending=False)
+    monthly = df.groupby(df["date"].dt.to_period("M"))["result"].mean() * 100
+
+    if any(k in p for k in ["工事種別", "種別", "カテゴリ", "category"]):
+        lines = "\n".join([f"- {c}: {r*100:.1f}%" for c, r in cat_rates.items()])
+        return f"**工事種別ごとの受注率**\n\n{lines}\n\n最も高いのは **{cat_rates.index[0]}** です。"
+
+    if any(k in p for k in ["エリア", "地域", "area"]):
+        lines = "\n".join([f"- {a}: {r*100:.1f}%" for a, r in area_rates.items()])
+        return f"**エリアごとの受注率**\n\n{lines}\n\n最も高いのは **{area_rates.index[0]}** です。"
+
+    if any(k in p for k in ["金額", "見積", "amount", "価格"]):
+        low = df[df["amount"] < df["amount"].median()]["result"].mean() * 100
+        high = df[df["amount"] >= df["amount"].median()]["result"].mean() * 100
+        return (
+            f"**見積金額と受注率の関係**\n\n"
+            f"- 中央値未満: {low:.1f}%\n"
+            f"- 中央値以上: {high:.1f}%\n\n"
+            f"{'低価格帯' if low > high else '高価格帯'}の方が受注率が高い傾向にあります。"
+        )
+
+    if any(k in p for k in ["今月", "傾向", "最近", "トレンド"]):
+        recent = monthly.tail(3)
+        lines = "\n".join([f"- {str(p)}: {v:.1f}%" for p, v in recent.items()])
+        return f"**直近3ヶ月の受注率推移**\n\n{lines}"
+
+    if any(k in p for k in ["改善", "提案", "アドバイス", "おすすめ"]):
+        best_cat = cat_rates.index[0]
+        worst_cat = cat_rates.index[-1]
+        best_area = area_rates.index[0]
+        return (
+            f"**受注率改善の提案**\n\n"
+            f"1. **{best_cat}** への注力 — 受注率 {cat_rates.iloc[0]*100:.1f}% と最高です。\n"
+            f"2. **{best_area}** エリアへの集中 — 受注率が高いエリアです。\n"
+            f"3. **{worst_cat}** の見直し — 受注率 {cat_rates.iloc[-1]*100:.1f}% と改善余地があります。"
+        )
+
+    # デフォルト: 概要を返す
+    return (
+        f"現在のデータ概要をお伝えします。\n\n{context}\n\n"
+        "もう少し具体的な質問（工事種別・エリア・金額・改善提案など）をいただけると詳しく回答できます。"
     )
