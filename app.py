@@ -734,3 +734,268 @@ with tab4:
         df_raw[["amount"]].describe().map(lambda x: f"{x:,.0f}"),
         use_container_width=True,
     )
+
+
+# ─────────────────────────────────────────
+# エージェント応答ロジック
+# ─────────────────────────────────────────
+
+def _agent_help_text() -> str:
+    return (
+        "**質問できること（例）:**\n"
+        "- 「受注率は？」— 全体の受注率を表示します\n"
+        "- 「エリア別の受注率を教えて」— エリアごとの比較\n"
+        "- 「工事種別の分析をして」— 種別ごとの受注状況\n"
+        "- 「月別の売上推移は？」— 月次受注額の棒グラフ\n"
+        "- 「見積金額の傾向は？」— 金額分布と受注の関係\n"
+        "- 「サマリーを出して」— データ全体の概要\n"
+        "- 「ランキングを見せて」— エリア×種別の受注率ランキング\n"
+        "- 「ヘルプ」— このヘルプを表示します"
+    )
+
+
+def build_agent_response(question: str, df: pd.DataFrame):
+    q = question.lower()
+    fig = None
+
+    if any(kw in q for kw in ["ヘルプ", "help", "使い方", "できること", "機能"]):
+        return _agent_help_text(), None
+
+    if any(kw in q for kw in ["サマリ", "概要", "まとめ", "summary", "overview", "全体"]):
+        total = len(df)
+        won = df["result"].sum()
+        rate = won / total * 100
+        revenue = df[df["result"] == 1]["amount"].sum()
+        avg_amt = df["amount"].mean()
+        best_area = df.groupby("area")["result"].mean().idxmax()
+        best_cat = df.groupby("category")["result"].mean().idxmax()
+        text = (
+            f"### データ概要サマリー\n"
+            f"| 項目 | 値 |\n|---|---|\n"
+            f"| 総案件数 | **{total:,} 件** |\n"
+            f"| 受注件数 | **{int(won):,} 件** |\n"
+            f"| 受注率 | **{rate:.1f}%** |\n"
+            f"| 受注総額 | **¥{revenue:,.0f}** |\n"
+            f"| 平均見積金額 | **¥{avg_amt:,.0f}** |\n"
+            f"| 最高受注率エリア | **{best_area}** |\n"
+            f"| 最高受注率工事種別 | **{best_cat}** |"
+        )
+        return text, None
+
+    if any(kw in q for kw in ["受注率", "勝率", "win rate", "受注割合"]):
+        if not any(kw in q for kw in ["エリア", "area", "地域", "種別", "カテゴリ", "category"]):
+            total = len(df)
+            won = int(df["result"].sum())
+            rate = won / total * 100
+            text = (
+                f"### 全体の受注率\n"
+                f"- 総案件数: **{total:,} 件**\n"
+                f"- 受注件数: **{won:,} 件**\n"
+                f"- **受注率: {rate:.1f}%**\n\n"
+            )
+            if rate >= 60:
+                text += "好調です！引き続き積極的な提案を続けましょう。"
+            elif rate >= 45:
+                text += "平均的な受注率です。提案の質向上や価格戦略の見直しが効果的かもしれません。"
+            else:
+                text += "受注率改善の余地があります。エリア・種別別の分析で弱点を特定しましょう。"
+            return text, None
+
+    if any(kw in q for kw in ["エリア", "area", "地域", "場所"]):
+        stats = df.groupby("area").agg(
+            total=("result", "count"),
+            won=("result", "sum"),
+            revenue=("amount", "sum"),
+        ).reset_index()
+        stats["受注率(%)"] = (stats["won"] / stats["total"] * 100).round(1)
+        stats = stats.sort_values("受注率(%)", ascending=False)
+        fig = px.bar(
+            stats, x="area", y="受注率(%)", color="area", text="受注率(%)",
+            title="エリア別 受注率", labels={"area": "エリア"},
+            color_discrete_sequence=px.colors.qualitative.Pastel,
+        )
+        fig.update_traces(texttemplate="%{text}%", textposition="outside")
+        fig.update_layout(showlegend=False, height=350)
+        best = stats.iloc[0]
+        rows = "\n".join(
+            f"| {r['area']} | {int(r['total'])} | {int(r['won'])} | {r['受注率(%)']:.1f}% | ¥{r['revenue']:,.0f} |"
+            for _, r in stats.iterrows()
+        )
+        text = (
+            f"### エリア別 受注分析\n"
+            f"| エリア | 総件数 | 受注 | 受注率 | 受注額 |\n|---|---|---|---|---|\n{rows}\n\n"
+            f"**最も受注率が高いエリアは「{best['area']}」（{best['受注率(%)']:.1f}%）です。**"
+        )
+        return text, fig
+
+    if any(kw in q for kw in ["種別", "カテゴリ", "category", "電気工事", "太陽光", "工事"]):
+        stats = df.groupby("category").agg(
+            total=("result", "count"),
+            won=("result", "sum"),
+            revenue=("amount", "sum"),
+        ).reset_index()
+        stats["受注率(%)"] = (stats["won"] / stats["total"] * 100).round(1)
+        stats = stats.sort_values("受注率(%)", ascending=False)
+        fig = px.bar(
+            stats, x="category", y="受注率(%)", color="category", text="受注率(%)",
+            title="工事種別 受注率", labels={"category": "工事種別"},
+            color_discrete_sequence=px.colors.qualitative.Set2,
+        )
+        fig.update_traces(texttemplate="%{text}%", textposition="outside")
+        fig.update_layout(showlegend=False, height=350)
+        best = stats.iloc[0]
+        rows = "\n".join(
+            f"| {r['category']} | {int(r['total'])} | {int(r['won'])} | {r['受注率(%)']:.1f}% | ¥{r['revenue']:,.0f} |"
+            for _, r in stats.iterrows()
+        )
+        text = (
+            f"### 工事種別 受注分析\n"
+            f"| 種別 | 総件数 | 受注 | 受注率 | 受注額 |\n|---|---|---|---|---|\n{rows}\n\n"
+            f"**最も受注率が高い種別は「{best['category']}」（{best['受注率(%)']:.1f}%）です。**"
+        )
+        return text, fig
+
+    if any(kw in q for kw in ["月", "month", "推移", "トレンド", "trend", "売上", "時系列"]):
+        df_won = df[df["result"] == 1].copy()
+        df_won["year_month"] = df_won["date"].dt.to_period("M").astype(str)
+        monthly = df_won.groupby("year_month")["amount"].sum().reset_index()
+        monthly.columns = ["年月", "受注額"]
+        fig = px.bar(
+            monthly, x="年月", y="受注額", title="月別受注額の推移",
+            color_discrete_sequence=["#1f77b4"], labels={"受注額": "受注額（円）"},
+        )
+        fig.update_layout(xaxis_tickangle=-45, height=380)
+        peak_row = monthly.loc[monthly["受注額"].idxmax()]
+        total_rev = monthly["受注額"].sum()
+        avg_rev = monthly["受注額"].mean()
+        text = (
+            f"### 月別受注額の推移\n"
+            f"- **受注総額**: ¥{total_rev:,.0f}\n"
+            f"- **月平均受注額**: ¥{avg_rev:,.0f}\n"
+            f"- **最高月**: {peak_row['年月']}（¥{peak_row['受注額']:,.0f}）\n\n"
+            f"月次の詳細はグラフをご確認ください。"
+        )
+        return text, fig
+
+    if any(kw in q for kw in ["金額", "amount", "見積", "価格", "費用"]):
+        df_plot = df.copy()
+        df_plot["結果"] = df_plot["result"].map({1: "受注", 0: "失注"})
+        fig = px.box(
+            df_plot, x="category", y="amount", color="結果",
+            title="工事種別ごとの見積金額分布（受注 vs 失注）",
+            labels={"category": "工事種別", "amount": "見積金額（円）"},
+            color_discrete_map={"受注": "#2196F3", "失注": "#FF7043"},
+        )
+        fig.update_layout(height=380)
+        won_avg = df[df["result"] == 1]["amount"].mean()
+        lost_avg = df[df["result"] == 0]["amount"].mean()
+        text = (
+            f"### 見積金額の分析\n"
+            f"- **受注案件の平均金額**: ¥{won_avg:,.0f}\n"
+            f"- **失注案件の平均金額**: ¥{lost_avg:,.0f}\n\n"
+            + (
+                "受注案件の方が平均金額が低い傾向があります。高額案件は競合が激しい可能性があります。"
+                if won_avg < lost_avg
+                else "受注案件の方が平均金額が高い傾向があります。付加価値の高い提案が奏功しています。"
+            )
+        )
+        return text, fig
+
+    if any(kw in q for kw in ["ランキング", "ranking", "rank", "上位", "best", "一番"]):
+        pivot = (
+            df.groupby(["area", "category"])["result"]
+            .mean().reset_index()
+            .rename(columns={"result": "受注率"})
+            .sort_values("受注率", ascending=False)
+        )
+        pivot["受注率(%)"] = (pivot["受注率"] * 100).round(1)
+        fig = px.bar(
+            pivot.head(9),
+            x="受注率(%)",
+            y=pivot.head(9).apply(lambda r: f"{r['area']}×{r['category']}", axis=1),
+            orientation="h", title="エリア×工事種別 受注率ランキング（上位）",
+            color="受注率(%)", color_continuous_scale="Blues",
+        )
+        fig.update_layout(height=400, showlegend=False, yaxis_title="")
+        top = pivot.iloc[0]
+        rows = "\n".join(
+            f"| {i+1} | {r['area']} | {r['category']} | {r['受注率(%)']:.1f}% |"
+            for i, (_, r) in enumerate(pivot.head(9).iterrows())
+        )
+        text = (
+            f"### エリア×工事種別 受注率ランキング\n"
+            f"| 順位 | エリア | 種別 | 受注率 |\n|---|---|---|---|\n{rows}\n\n"
+            f"**トップは「{top['area']} × {top['category']}」（{top['受注率(%)']:.1f}%）です。**"
+        )
+        return text, fig
+
+    total = len(df)
+    won = int(df["result"].sum())
+    rate = won / total * 100
+    text = (
+        f"「{question}」についての分析結果です。\n\n"
+        f"現在 **{total:,} 件** のデータが読み込まれており、受注率は **{rate:.1f}%** です。\n\n"
+        + _agent_help_text()
+    )
+    return text, None
+
+
+# ─────────────────────────────────────────
+# タブ5: エージェントビュー
+# ─────────────────────────────────────────
+
+with tab5:
+    st.subheader("🧠 AIデータエージェント")
+    st.caption("データについて日本語で質問してください。受注状況・エリア・種別・金額などを分析します。")
+
+    if "agent_messages" not in st.session_state:
+        st.session_state.agent_messages = [
+            {
+                "role": "assistant",
+                "content": (
+                    "こんにちは！LuminaTech 受注予測エージェントです。\n\n"
+                    + _agent_help_text()
+                ),
+                "figure": None,
+            }
+        ]
+
+    for msg in st.session_state.agent_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if msg.get("figure") is not None:
+                st.plotly_chart(msg["figure"], use_container_width=True)
+
+    user_input = st.chat_input("例: エリア別の受注率を教えて")
+
+    if user_input:
+        st.session_state.agent_messages.append(
+            {"role": "user", "content": user_input, "figure": None}
+        )
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        with st.chat_message("assistant"):
+            with st.spinner("分析中..."):
+                response_text, response_fig = build_agent_response(user_input, df_raw)
+            st.markdown(response_text)
+            if response_fig is not None:
+                st.plotly_chart(response_fig, use_container_width=True)
+
+        st.session_state.agent_messages.append(
+            {"role": "assistant", "content": response_text, "figure": response_fig}
+        )
+
+    if len(st.session_state.agent_messages) > 1:
+        if st.button("🗑️ 会話をクリア", key="clear_agent"):
+            st.session_state.agent_messages = [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "会話をリセットしました。新しい質問をどうぞ！\n\n"
+                        + _agent_help_text()
+                    ),
+                    "figure": None,
+                }
+            ]
+            st.rerun()
