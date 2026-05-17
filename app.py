@@ -1,5 +1,5 @@
 """
-LuminaTech 受注予測モデル
+接地アプリ — LuminaTech 受注予測モデル
 電気工事・太陽光パネル設置の受注確率を予測するStreamlitアプリ
 """
 
@@ -28,13 +28,13 @@ COMPANY_NAME = "LuminaTech 横浜本社"
 # ページ設定
 # ─────────────────────────────────────────
 st.set_page_config(
-    page_title="LuminaTech 受注予測モデル",
+    page_title="接地アプリ｜LuminaTech 受注予測",
     page_icon="⚡",
     layout="wide",
 )
 
-st.title("⚡ LuminaTech 受注予測モデル")
-st.caption("電気工事・太陽光パネル設置の受注確率・売上予測ダッシュボード")
+st.title("⚡ 接地アプリ")
+st.caption("LuminaTech 受注予測モデル — 電気工事・太陽光パネル設置の受注確率・売上予測ダッシュボード")
 
 # ─────────────────────────────────────────
 # サンプルデータ生成
@@ -260,18 +260,19 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("LuminaTech 受注予測システム v1.0")
+    st.caption("接地アプリ v1.0 / LuminaTech 受注予測システム")
 
 # ─────────────────────────────────────────
 # タブ構成
 # ─────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 ダッシュボード",
     "🤖 モデル評価",
     "🔮 受注確率予測",
     "📋 データ確認",
     "🧠 エージェント",
+    "🔬 ディープリサーチ",
 ])
 
 # ─────────────────────────────────────────
@@ -831,4 +832,402 @@ def _agent_answer(prompt: str, context: str, df) -> str:
     return (
         f"現在のデータ概要をお伝えします。\n\n{context}\n\n"
         "もう少し具体的な質問（工事種別・エリア・金額・改善提案など）をいただけると詳しく回答できます。"
+    )
+
+
+# ─────────────────────────────────────────
+# タブ6: ディープリサーチ（多次元深掘り分析）
+# ─────────────────────────────────────────
+
+def _amount_tier(amount: float) -> str:
+    """見積金額を 5 段階のティアに分類する。"""
+    if amount < 500_000:
+        return "①〜50万"
+    if amount < 1_500_000:
+        return "②50〜150万"
+    if amount < 3_500_000:
+        return "③150〜350万"
+    if amount < 7_000_000:
+        return "④350〜700万"
+    return "⑤700万〜"
+
+
+def _generate_insights(df: pd.DataFrame) -> list[str]:
+    """
+    データから主要なインサイトを自動抽出する。
+    エグゼクティブサマリーとして箇条書きで返す。
+    """
+    insights: list[str] = []
+
+    overall = df["result"].mean() * 100
+
+    # 1) 工事種別の勝ち負け
+    cat_rates = df.groupby("category")["result"].mean() * 100
+    cat_best, cat_worst = cat_rates.idxmax(), cat_rates.idxmin()
+    gap = cat_rates.max() - cat_rates.min()
+    insights.append(
+        f"**工事種別の差は {gap:.1f}pt** — {cat_best} が {cat_rates.max():.1f}% で最高、"
+        f"{cat_worst} が {cat_rates.min():.1f}% で最低。"
+    )
+
+    # 2) エリアの勝ち負け
+    area_rates = df.groupby("area")["result"].mean() * 100
+    area_best = area_rates.idxmax()
+    insights.append(
+        f"**エリア別では {area_best} が最強** — 受注率 {area_rates.max():.1f}% "
+        f"(全体平均 {overall:.1f}% を {area_rates.max() - overall:+.1f}pt 上回る)。"
+    )
+
+    # 3) 金額帯による傾向
+    tier_rates = df.assign(tier=df["amount"].map(_amount_tier)).groupby("tier")["result"].mean() * 100
+    tier_best = tier_rates.idxmax()
+    insights.append(
+        f"**金額帯ベストは {tier_best}** — 受注率 {tier_rates.max():.1f}%。"
+        f"案件規模と受注率の相関を考慮した戦略が有効。"
+    )
+
+    # 4) 直近トレンド（最新3ヶ月 vs その前3ヶ月）
+    monthly = df.groupby(df["date"].dt.to_period("M"))["result"].mean() * 100
+    if len(monthly) >= 6:
+        recent = monthly.tail(3).mean()
+        prev = monthly.tail(6).head(3).mean()
+        delta = recent - prev
+        arrow = "📈 上昇" if delta > 1 else ("📉 下降" if delta < -1 else "➡️ 横ばい")
+        insights.append(
+            f"**直近トレンドは {arrow}** — 最新3ヶ月平均 {recent:.1f}% / 前3ヶ月 {prev:.1f}% "
+            f"({delta:+.1f}pt)。"
+        )
+
+    # 5) 受注額の集中度（パレート）
+    df_won = df[df["result"] == 1].sort_values("amount", ascending=False)
+    if len(df_won) > 0:
+        total_rev = df_won["amount"].sum()
+        top20_n = max(1, int(len(df_won) * 0.2))
+        top20_share = df_won.head(top20_n)["amount"].sum() / total_rev * 100
+        insights.append(
+            f"**売上の集中度: 上位20%案件で全体の {top20_share:.1f}%** — "
+            f"{'高集中型（大型案件依存）' if top20_share > 70 else '分散型（安定収益構造）'}。"
+        )
+
+    # 6) 高金額×高勝率の機会セグメント
+    cross = df.assign(tier=df["amount"].map(_amount_tier)).groupby(
+        ["category", "area", "tier"]
+    ).agg(n=("result", "size"), rate=("result", "mean"))
+    cross = cross[cross["n"] >= 5]
+    if len(cross) > 0:
+        opp = cross.sort_values("rate", ascending=False).iloc[0]
+        cat, area, tier = cross.sort_values("rate", ascending=False).index[0]
+        insights.append(
+            f"**狙い目セグメント: {cat} × {area} × {tier}** — "
+            f"受注率 {opp['rate']*100:.1f}% (n={int(opp['n'])})。営業リソースの集中投下を推奨。"
+        )
+
+    return insights
+
+
+with tab6:
+    st.subheader("🔬 ディープリサーチ — データの多角的深掘り")
+    st.caption(
+        "受注データを多次元で分析し、勝ちパターン・失注リスク・狙い目セグメントを自動抽出します。"
+    )
+
+    # ── エグゼクティブサマリー（自動インサイト）────────────────
+    st.markdown("### 📌 エグゼクティブサマリー")
+    insights = _generate_insights(df_raw)
+    for i, ins in enumerate(insights, 1):
+        st.markdown(f"**{i}.** {ins}")
+
+    st.divider()
+
+    # ── 金額帯別パフォーマンス ──────────────────────────────
+    st.markdown("### 💴 金額帯別 受注率・売上貢献")
+
+    df_tier = df_raw.copy()
+    df_tier["金額帯"] = df_tier["amount"].map(_amount_tier)
+    tier_order = ["①〜50万", "②50〜150万", "③150〜350万", "④350〜700万", "⑤700万〜"]
+
+    tier_stats = df_tier.groupby("金額帯").agg(
+        案件数=("result", "size"),
+        受注件数=("result", "sum"),
+        平均金額=("amount", "mean"),
+    ).reindex(tier_order).fillna(0)
+    tier_stats["受注率(%)"] = (tier_stats["受注件数"] / tier_stats["案件数"].replace(0, np.nan) * 100).round(1)
+    tier_stats["受注売上"] = df_tier[df_tier["result"] == 1].groupby("金額帯")["amount"].sum().reindex(tier_order).fillna(0)
+
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        fig_tier_rate = px.bar(
+            tier_stats.reset_index(),
+            x="金額帯",
+            y="受注率(%)",
+            text="受注率(%)",
+            title="金額帯別の受注率",
+            color="受注率(%)",
+            color_continuous_scale="Viridis",
+        )
+        fig_tier_rate.update_traces(texttemplate="%{text}%", textposition="outside")
+        fig_tier_rate.update_layout(height=380, showlegend=False)
+        st.plotly_chart(fig_tier_rate, use_container_width=True)
+    with col_t2:
+        fig_tier_rev = px.bar(
+            tier_stats.reset_index(),
+            x="金額帯",
+            y="受注売上",
+            title="金額帯別の受注売上（円）",
+            color="受注売上",
+            color_continuous_scale="Plasma",
+        )
+        fig_tier_rev.update_layout(height=380, showlegend=False)
+        st.plotly_chart(fig_tier_rev, use_container_width=True)
+
+    st.dataframe(
+        tier_stats.reset_index().assign(
+            平均金額=lambda d: d["平均金額"].apply(lambda x: f"¥{x:,.0f}"),
+            受注売上=lambda d: d["受注売上"].apply(lambda x: f"¥{x:,.0f}"),
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.divider()
+
+    # ── 多次元クロス分析 ───────────────────────────────────
+    st.markdown("### 🧩 多次元クロス分析（カテゴリ × エリア × 金額帯）")
+
+    metric_choice = st.radio(
+        "表示する指標",
+        ["受注率", "案件数", "受注売上"],
+        horizontal=True,
+        key="dr_cross_metric",
+    )
+
+    df_cross = df_raw.copy()
+    df_cross["金額帯"] = df_cross["amount"].map(_amount_tier)
+
+    if metric_choice == "受注率":
+        cross = df_cross.groupby(["category", "金額帯"])["result"].mean().unstack().reindex(columns=tier_order) * 100
+        color_scale, fmt, title_suffix = "Blues", ".1f", "(%)"
+    elif metric_choice == "案件数":
+        cross = df_cross.groupby(["category", "金額帯"])["result"].size().unstack().reindex(columns=tier_order)
+        color_scale, fmt, title_suffix = "Greens", ".0f", "(件)"
+    else:
+        cross = df_cross[df_cross["result"] == 1].groupby(["category", "金額帯"])["amount"].sum().unstack().reindex(columns=tier_order)
+        color_scale, fmt, title_suffix = "Oranges", ".0f", "(円)"
+
+    fig_cross = px.imshow(
+        cross,
+        text_auto=fmt,
+        color_continuous_scale=color_scale,
+        title=f"カテゴリ × 金額帯 {metric_choice} {title_suffix}",
+        aspect="auto",
+        labels={"x": "金額帯", "y": "工事種別", "color": metric_choice},
+    )
+    fig_cross.update_layout(height=380)
+    st.plotly_chart(fig_cross, use_container_width=True)
+
+    # サンキー図: カテゴリ → エリア → 結果
+    st.markdown("#### 🌊 案件の流れ（カテゴリ → エリア → 結果）")
+    sankey_df = df_raw.copy()
+    sankey_df["結果"] = sankey_df["result"].map({1: "受注", 0: "失注"})
+
+    cats = sankey_df["category"].unique().tolist()
+    areas_list = sankey_df["area"].unique().tolist()
+    results_list = ["受注", "失注"]
+    nodes = cats + areas_list + results_list
+    node_idx = {name: i for i, name in enumerate(nodes)}
+
+    flow1 = sankey_df.groupby(["category", "area"]).size().reset_index(name="value")
+    flow2 = sankey_df.groupby(["area", "結果"]).size().reset_index(name="value")
+
+    sources = [node_idx[c] for c in flow1["category"]] + [node_idx[a] for a in flow2["area"]]
+    targets = [node_idx[a] for a in flow1["area"]] + [node_idx[r] for r in flow2["結果"]]
+    values = flow1["value"].tolist() + flow2["value"].tolist()
+
+    fig_sankey = go.Figure(go.Sankey(
+        node=dict(
+            label=nodes,
+            pad=15,
+            thickness=18,
+            color=["#4C78A8"] * len(cats) + ["#72B7B2"] * len(areas_list) + ["#54A24B", "#E45756"],
+        ),
+        link=dict(source=sources, target=targets, value=values),
+    ))
+    fig_sankey.update_layout(height=420, margin=dict(l=10, r=10, t=20, b=10))
+    st.plotly_chart(fig_sankey, use_container_width=True)
+
+    st.divider()
+
+    # ── 季節性分析 ─────────────────────────────────────────
+    st.markdown("### 🗓️ 季節性ヒートマップ（年 × 月）")
+
+    df_season = df_raw.copy()
+    df_season["年"] = df_season["date"].dt.year
+    df_season["月"] = df_season["date"].dt.month
+
+    season_metric = st.radio(
+        "指標を選択",
+        ["受注率", "案件数"],
+        horizontal=True,
+        key="dr_season_metric",
+    )
+    if season_metric == "受注率":
+        season_pivot = df_season.groupby(["年", "月"])["result"].mean().unstack(fill_value=np.nan) * 100
+        season_scale, season_fmt = "RdYlGn", ".1f"
+    else:
+        season_pivot = df_season.groupby(["年", "月"])["result"].size().unstack(fill_value=0)
+        season_scale, season_fmt = "Blues", ".0f"
+
+    season_pivot = season_pivot.reindex(columns=range(1, 13))
+    fig_season = px.imshow(
+        season_pivot,
+        text_auto=season_fmt,
+        color_continuous_scale=season_scale,
+        title=f"年 × 月の {season_metric}",
+        aspect="auto",
+        labels={"x": "月", "y": "年", "color": season_metric},
+    )
+    fig_season.update_xaxes(tickmode="array", tickvals=list(range(1, 13)), ticktext=[f"{m}月" for m in range(1, 13)])
+    fig_season.update_layout(height=320)
+    st.plotly_chart(fig_season, use_container_width=True)
+
+    # 月次推移＋3ヶ月移動平均
+    st.markdown("#### 📉 月次受注率の推移と3ヶ月移動平均")
+    monthly_full = df_raw.groupby(df_raw["date"].dt.to_period("M")).agg(
+        受注率=("result", lambda s: s.mean() * 100),
+        案件数=("result", "size"),
+    ).reset_index()
+    monthly_full["年月"] = monthly_full["date"].astype(str)
+    monthly_full["3MA"] = monthly_full["受注率"].rolling(3, min_periods=1).mean()
+
+    fig_trend = go.Figure()
+    fig_trend.add_trace(go.Bar(
+        x=monthly_full["年月"],
+        y=monthly_full["案件数"],
+        name="案件数",
+        marker_color="lightsteelblue",
+        yaxis="y2",
+        opacity=0.6,
+    ))
+    fig_trend.add_trace(go.Scatter(
+        x=monthly_full["年月"],
+        y=monthly_full["受注率"],
+        name="月次受注率(%)",
+        mode="lines+markers",
+        line=dict(color="#1f77b4", width=2),
+    ))
+    fig_trend.add_trace(go.Scatter(
+        x=monthly_full["年月"],
+        y=monthly_full["3MA"],
+        name="3ヶ月移動平均",
+        mode="lines",
+        line=dict(color="crimson", width=3, dash="dash"),
+    ))
+    fig_trend.update_layout(
+        yaxis=dict(title="受注率 (%)"),
+        yaxis2=dict(title="案件数", overlaying="y", side="right", showgrid=False),
+        xaxis=dict(tickangle=-45),
+        height=420,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig_trend, use_container_width=True)
+
+    st.divider()
+
+    # ── 失注リスク要因分析 ──────────────────────────────────
+    st.markdown("### ⚠️ 失注リスク要因の分析")
+
+    lost = df_raw[df_raw["result"] == 0]
+    won = df_raw[df_raw["result"] == 1]
+
+    col_r1, col_r2, col_r3 = st.columns(3)
+    col_r1.metric("失注件数", f"{len(lost):,} 件")
+    col_r2.metric(
+        "失注平均金額",
+        f"¥{lost['amount'].mean():,.0f}" if len(lost) else "—",
+        delta=f"{(lost['amount'].mean() - won['amount'].mean()):+,.0f} 円 vs 受注" if len(lost) and len(won) else None,
+    )
+    col_r3.metric(
+        "想定逸失売上",
+        f"¥{lost['amount'].sum():,.0f}" if len(lost) else "—",
+        help="失注した案件の見積金額合計（仮に全件受注した場合の理論上の上限）",
+    )
+
+    # セグメント別の失注率ランキング
+    seg = df_raw.copy()
+    seg["金額帯"] = seg["amount"].map(_amount_tier)
+    seg_stats = seg.groupby(["category", "area", "金額帯"]).agg(
+        n=("result", "size"),
+        loss_rate=("result", lambda s: (1 - s.mean()) * 100),
+    ).reset_index()
+    seg_stats = seg_stats[seg_stats["n"] >= 5].sort_values("loss_rate", ascending=False)
+
+    st.markdown("#### 🚨 失注率が高いセグメント TOP10（n≥5）")
+    if len(seg_stats) > 0:
+        top_loss = seg_stats.head(10).copy()
+        top_loss["失注率"] = top_loss["loss_rate"].map(lambda x: f"{x:.1f}%")
+        st.dataframe(
+            top_loss.rename(columns={
+                "category": "工事種別",
+                "area": "エリア",
+                "n": "案件数",
+            })[["工事種別", "エリア", "金額帯", "案件数", "失注率"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("サンプル数が足りないため、セグメント別の集計をスキップしました。")
+
+    # 受注 vs 失注 の金額分布
+    st.markdown("#### 💵 受注 vs 失注 の金額分布")
+    df_dist = df_raw.copy()
+    df_dist["結果"] = df_dist["result"].map({1: "受注", 0: "失注"})
+    fig_dist = px.violin(
+        df_dist,
+        x="結果",
+        y="amount",
+        color="結果",
+        box=True,
+        points="all",
+        title="受注／失注ごとの見積金額分布（バイオリン図）",
+        labels={"amount": "見積金額（円）"},
+        color_discrete_map={"受注": "#2196F3", "失注": "#FF7043"},
+    )
+    fig_dist.update_layout(height=420, showlegend=False)
+    st.plotly_chart(fig_dist, use_container_width=True)
+
+    st.divider()
+
+    # ── アクションレコメンド ────────────────────────────────
+    st.markdown("### 🎯 データドリブンなアクション提案")
+
+    cat_rates_full = df_raw.groupby("category")["result"].mean() * 100
+    area_rates_full = df_raw.groupby("area")["result"].mean() * 100
+    tier_rates_full = df_raw.assign(t=df_raw["amount"].map(_amount_tier)).groupby("t")["result"].mean() * 100
+
+    rec_best_cat = cat_rates_full.idxmax()
+    rec_worst_cat = cat_rates_full.idxmin()
+    rec_best_area = area_rates_full.idxmax()
+    rec_best_tier = tier_rates_full.idxmax()
+
+    # 機会金額の試算: 最良セグメントの受注率を全体に適用した場合の追加売上
+    best_rate = cat_rates_full.max() / 100
+    current_rate = df_raw["result"].mean()
+    avg_amount = df_raw["amount"].mean()
+    uplift_potential = (best_rate - current_rate) * len(df_raw) * avg_amount
+
+    st.success(
+        f"#### 💡 重点施策\n\n"
+        f"1. **{rec_best_cat}** を主力商材として営業ポートフォリオを再構成 "
+        f"(受注率 {cat_rates_full.max():.1f}%)\n"
+        f"2. **{rec_best_area}** エリアの案件発掘を強化 "
+        f"(受注率 {area_rates_full.max():.1f}%)\n"
+        f"3. **{rec_best_tier}** の価格帯にスイートスポットあり — 提案金額の最適化を検討\n"
+        f"4. **{rec_worst_cat}** は受注率 {cat_rates_full.min():.1f}% — 撤退 or 抜本的見直しを判断\n"
+    )
+
+    st.info(
+        f"#### 📊 機会試算\n\n"
+        f"現在の全体受注率 **{current_rate*100:.1f}%** を最良カテゴリ水準 **{best_rate*100:.1f}%** まで引き上げた場合、"
+        f"理論上の追加売上ポテンシャル: **¥{uplift_potential:,.0f}**\n\n"
+        f"※ 平均見積金額 ¥{avg_amount:,.0f} × 全案件 {len(df_raw):,} 件 × 受注率改善幅で算出した参考値。"
     )
