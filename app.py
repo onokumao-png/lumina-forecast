@@ -1,5 +1,5 @@
 """
-LuminaTech 受注予測モデル
+接地アプリ — LuminaTech 受注予測モデル
 電気工事・太陽光パネル設置の受注確率を予測するStreamlitアプリ
 """
 
@@ -28,13 +28,13 @@ COMPANY_NAME = "LuminaTech 横浜本社"
 # ページ設定
 # ─────────────────────────────────────────
 st.set_page_config(
-    page_title="LuminaTech 受注予測モデル",
+    page_title="接地アプリ｜LuminaTech 受注予測",
     page_icon="⚡",
     layout="wide",
 )
 
-st.title("⚡ LuminaTech 受注予測モデル")
-st.caption("電気工事・太陽光パネル設置の受注確率・売上予測ダッシュボード")
+st.title("⚡ 接地アプリ")
+st.caption("LuminaTech 受注予測モデル — 電気工事・太陽光パネル設置の受注確率・売上予測ダッシュボード")
 
 # ─────────────────────────────────────────
 # サンプルデータ生成
@@ -260,7 +260,7 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("LuminaTech 受注予測システム v1.0")
+    st.caption("接地アプリ v1.0 / LuminaTech 受注予測システム")
 
 # ─────────────────────────────────────────
 # タブ構成
