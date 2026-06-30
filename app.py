@@ -266,12 +266,13 @@ with st.sidebar:
 # タブ構成
 # ─────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 ダッシュボード",
     "🤖 モデル評価",
     "🔮 受注確率予測",
     "📋 データ確認",
     "🧠 エージェント",
+    "🏢 会社情報",
 ])
 
 # ─────────────────────────────────────────
@@ -832,3 +833,26 @@ def _agent_answer(prompt: str, context: str, df) -> str:
         f"現在のデータ概要をお伝えします。\n\n{context}\n\n"
         "もう少し具体的な質問（工事種別・エリア・金額・改善提案など）をいただけると詳しく回答できます。"
     )
+
+
+# ─────────────────────────────────────────
+# タブ6: 会社情報 (ABOUT)
+# ─────────────────────────────────────────
+
+with tab6:
+    st.subheader("🏢 会社情報")
+
+    st.markdown("### COMPANY DATA")
+
+    company_data = {
+        "商号": "LuminaTech 株式会社",
+        "本社所在地": "神奈川県横浜市",
+        "事業内容": "電気工事・太陽光パネル設置・AI受注予測システム開発",
+        "古物商許可": "東京都公安委員会 第301032618963号",
+    }
+
+    for label, value in company_data.items():
+        col_l, col_r = st.columns([1, 3])
+        col_l.markdown(f"**{label}**")
+        col_r.markdown(value)
+        st.divider()
