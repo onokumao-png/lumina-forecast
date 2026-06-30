@@ -261,6 +261,10 @@ with st.sidebar:
 
     st.divider()
     st.caption("LuminaTech 受注予測システム v1.0")
+    st.divider()
+    st.caption("🪪 古物商許可")
+    st.caption("東京都公安委員会")
+    st.caption("第301032618963号")
 
 # ─────────────────────────────────────────
 # タブ構成
