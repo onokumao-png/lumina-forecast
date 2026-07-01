@@ -8,7 +8,6 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import pydeck as pdk
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
@@ -219,6 +218,63 @@ def train_model(df: pd.DataFrame, model_type: str):
     }
 
     return model, scaler, le_cat, le_area, feature_cols, metrics
+
+
+# ─────────────────────────────────────────
+# エージェント回答（ルールベース）
+# ─────────────────────────────────────────
+
+def _agent_answer(prompt: str, context: str, df) -> str:
+    """
+    ルールベースの簡易エージェント回答。
+    API連携なしでデータから直接回答を生成する。
+    """
+    p = prompt.lower()
+
+    win_rate = df["result"].mean() * 100
+    cat_rates = df.groupby("category")["result"].mean().sort_values(ascending=False)
+    area_rates = df.groupby("area")["result"].mean().sort_values(ascending=False)
+    monthly = df.groupby(df["date"].dt.to_period("M"))["result"].mean() * 100
+
+    if any(k in p for k in ["工事種別", "種別", "カテゴリ", "category"]):
+        lines = "\n".join([f"- {c}: {r*100:.1f}%" for c, r in cat_rates.items()])
+        return f"**工事種別ごとの受注率**\n\n{lines}\n\n最も高いのは **{cat_rates.index[0]}** です。"
+
+    if any(k in p for k in ["エリア", "地域", "area"]):
+        lines = "\n".join([f"- {a}: {r*100:.1f}%" for a, r in area_rates.items()])
+        return f"**エリアごとの受注率**\n\n{lines}\n\n最も高いのは **{area_rates.index[0]}** です。"
+
+    if any(k in p for k in ["金額", "見積", "amount", "価格"]):
+        low = df[df["amount"] < df["amount"].median()]["result"].mean() * 100
+        high = df[df["amount"] >= df["amount"].median()]["result"].mean() * 100
+        return (
+            f"**見積金額と受注率の関係**\n\n"
+            f"- 中央値未満: {low:.1f}%\n"
+            f"- 中央値以上: {high:.1f}%\n\n"
+            f"{'低価格帯' if low > high else '高価格帯'}の方が受注率が高い傾向にあります。"
+        )
+
+    if any(k in p for k in ["今月", "傾向", "最近", "トレンド"]):
+        recent = monthly.tail(3)
+        lines = "\n".join([f"- {str(p)}: {v:.1f}%" for p, v in recent.items()])
+        return f"**直近3ヶ月の受注率推移**\n\n{lines}"
+
+    if any(k in p for k in ["改善", "提案", "アドバイス", "おすすめ"]):
+        best_cat = cat_rates.index[0]
+        worst_cat = cat_rates.index[-1]
+        best_area = area_rates.index[0]
+        return (
+            f"**受注率改善の提案**\n\n"
+            f"1. **{best_cat}** への注力 — 受注率 {cat_rates.iloc[0]*100:.1f}% と最高です。\n"
+            f"2. **{best_area}** エリアへの集中 — 受注率が高いエリアです。\n"
+            f"3. **{worst_cat}** の見直し — 受注率 {cat_rates.iloc[-1]*100:.1f}% と改善余地があります。"
+        )
+
+    # デフォルト: 概要を返す
+    return (
+        f"現在のデータ概要をお伝えします。\n\n{context}\n\n"
+        "もう少し具体的な質問（工事種別・エリア・金額・改善提案など）をいただけると詳しく回答できます。"
+    )
 
 
 # ─────────────────────────────────────────
@@ -779,56 +835,3 @@ with tab5:
     if st.button("🔄 会話をリセット", key="reset_chat"):
         st.session_state.agent_messages = []
         st.rerun()
-
-
-def _agent_answer(prompt: str, context: str, df) -> str:
-    """
-    ルールベースの簡易エージェント回答。
-    API連携なしでデータから直接回答を生成する。
-    """
-    p = prompt.lower()
-
-    win_rate = df["result"].mean() * 100
-    cat_rates = df.groupby("category")["result"].mean().sort_values(ascending=False)
-    area_rates = df.groupby("area")["result"].mean().sort_values(ascending=False)
-    monthly = df.groupby(df["date"].dt.to_period("M"))["result"].mean() * 100
-
-    if any(k in p for k in ["工事種別", "種別", "カテゴリ", "category"]):
-        lines = "\n".join([f"- {c}: {r*100:.1f}%" for c, r in cat_rates.items()])
-        return f"**工事種別ごとの受注率**\n\n{lines}\n\n最も高いのは **{cat_rates.index[0]}** です。"
-
-    if any(k in p for k in ["エリア", "地域", "area"]):
-        lines = "\n".join([f"- {a}: {r*100:.1f}%" for a, r in area_rates.items()])
-        return f"**エリアごとの受注率**\n\n{lines}\n\n最も高いのは **{area_rates.index[0]}** です。"
-
-    if any(k in p for k in ["金額", "見積", "amount", "価格"]):
-        low = df[df["amount"] < df["amount"].median()]["result"].mean() * 100
-        high = df[df["amount"] >= df["amount"].median()]["result"].mean() * 100
-        return (
-            f"**見積金額と受注率の関係**\n\n"
-            f"- 中央値未満: {low:.1f}%\n"
-            f"- 中央値以上: {high:.1f}%\n\n"
-            f"{'低価格帯' if low > high else '高価格帯'}の方が受注率が高い傾向にあります。"
-        )
-
-    if any(k in p for k in ["今月", "傾向", "最近", "トレンド"]):
-        recent = monthly.tail(3)
-        lines = "\n".join([f"- {str(p)}: {v:.1f}%" for p, v in recent.items()])
-        return f"**直近3ヶ月の受注率推移**\n\n{lines}"
-
-    if any(k in p for k in ["改善", "提案", "アドバイス", "おすすめ"]):
-        best_cat = cat_rates.index[0]
-        worst_cat = cat_rates.index[-1]
-        best_area = area_rates.index[0]
-        return (
-            f"**受注率改善の提案**\n\n"
-            f"1. **{best_cat}** への注力 — 受注率 {cat_rates.iloc[0]*100:.1f}% と最高です。\n"
-            f"2. **{best_area}** エリアへの集中 — 受注率が高いエリアです。\n"
-            f"3. **{worst_cat}** の見直し — 受注率 {cat_rates.iloc[-1]*100:.1f}% と改善余地があります。"
-        )
-
-    # デフォルト: 概要を返す
-    return (
-        f"現在のデータ概要をお伝えします。\n\n{context}\n\n"
-        "もう少し具体的な質問（工事種別・エリア・金額・改善提案など）をいただけると詳しく回答できます。"
-    )
