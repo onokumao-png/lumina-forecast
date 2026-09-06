@@ -8,7 +8,6 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import pydeck as pdk
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
@@ -40,26 +39,35 @@ st.caption("電気工事・太陽光パネル設置の受注確率・売上予�
 # サンプルデータ生成
 # ─────────────────────────────────────────
 
-def generate_sample_data(n: int = 300) -> pd.DataFrame:
+def generate_sample_data(n: int = 500) -> pd.DataFrame:
     """
     電気工事・太陽光案件らしいリアルなサンプルデータを生成する。
     実際のCSVがない場合の代替データとして使用。
     """
     np.random.seed(42)
 
-    # 見積提出日（2022年1月〜2024年12月）
-    start = pd.Timestamp("2022-01-01")
-    end = pd.Timestamp("2024-12-31")
-    dates = pd.to_datetime(
-        np.random.randint(start.value, end.value, size=n)
-    )
-
-    # 工事種別
+    # 工事種別（日付の季節性がカテゴリに依存するため先に決める）
     categories = np.random.choice(
         ["電気工事", "太陽光", "その他"],
         size=n,
         p=[0.45, 0.40, 0.15],
     )
+
+    # 見積提出日（2022年1月〜2024年12月）
+    # カテゴリ別の月重み: 太陽光は春〜初夏（3〜6月）、電気工事は年度末（1〜3月）に集中
+    month_weights = {
+        "太陽光":   [1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1],
+        "電気工事": [1.8, 1.8, 1.8, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        "その他":   [1] * 12,
+    }
+    dates = []
+    for cat in categories:
+        w = np.array(month_weights.get(cat, [1] * 12), dtype=float)
+        month = np.random.choice(np.arange(1, 13), p=w / w.sum())
+        year = np.random.randint(2022, 2025)
+        days_in_month = pd.Period(f"{year}-{month:02d}").days_in_month
+        day = np.random.randint(1, days_in_month + 1)  # 月末日（29〜31日）も出るようにする
+        dates.append(pd.Timestamp(year=year, month=month, day=day))
 
     # エリア
     areas = np.random.choice(
@@ -78,9 +86,9 @@ def generate_sample_data(n: int = 300) -> pd.DataFrame:
         else:
             amounts.append(int(np.random.lognormal(12.8, 0.7)))  # 30万〜200万円程度
 
-    # 受注確率のロジック（金額・カテゴリ・エリアに依存）
+    # 受注確率のロジック（金額・カテゴリ・エリア・季節に依存）
     results = []
-    for cat, area, amt in zip(categories, areas, amounts):
+    for cat, area, amt, dt in zip(categories, areas, amounts, dates):
         prob = 0.50  # ベース確率
 
         # カテゴリ補正
@@ -88,6 +96,12 @@ def generate_sample_data(n: int = 300) -> pd.DataFrame:
             prob += 0.10
         elif cat == "電気工事":
             prob += 0.05
+
+        # 季節補正（繁忙期 +0.08 / 閑散期 -0.04。差 12pt でモデルが季節性を学習できる強さにする）
+        if cat == "太陽光":
+            prob += 0.08 if 3 <= dt.month <= 6 else -0.04
+        elif cat == "電気工事":
+            prob += 0.08 if 1 <= dt.month <= 3 else -0.04
 
         # エリア補正
         if area == "東京":
@@ -222,6 +236,63 @@ def train_model(df: pd.DataFrame, model_type: str):
 
 
 # ─────────────────────────────────────────
+# エージェント回答（ルールベース）
+# ─────────────────────────────────────────
+
+def _agent_answer(prompt: str, context: str, df) -> str:
+    """
+    ルールベースの簡易エージェント回答。
+    API連携なしでデータから直接回答を生成する。
+    """
+    p = prompt.lower()
+
+    win_rate = df["result"].mean() * 100
+    cat_rates = df.groupby("category")["result"].mean().sort_values(ascending=False)
+    area_rates = df.groupby("area")["result"].mean().sort_values(ascending=False)
+    monthly = df.groupby(df["date"].dt.to_period("M"))["result"].mean() * 100
+
+    if any(k in p for k in ["工事種別", "種別", "カテゴリ", "category"]):
+        lines = "\n".join([f"- {c}: {r*100:.1f}%" for c, r in cat_rates.items()])
+        return f"**工事種別ごとの受注率**\n\n{lines}\n\n最も高いのは **{cat_rates.index[0]}** です。"
+
+    if any(k in p for k in ["エリア", "地域", "area"]):
+        lines = "\n".join([f"- {a}: {r*100:.1f}%" for a, r in area_rates.items()])
+        return f"**エリアごとの受注率**\n\n{lines}\n\n最も高いのは **{area_rates.index[0]}** です。"
+
+    if any(k in p for k in ["金額", "見積", "amount", "価格"]):
+        low = df[df["amount"] < df["amount"].median()]["result"].mean() * 100
+        high = df[df["amount"] >= df["amount"].median()]["result"].mean() * 100
+        return (
+            f"**見積金額と受注率の関係**\n\n"
+            f"- 中央値未満: {low:.1f}%\n"
+            f"- 中央値以上: {high:.1f}%\n\n"
+            f"{'低価格帯' if low > high else '高価格帯'}の方が受注率が高い傾向にあります。"
+        )
+
+    if any(k in p for k in ["今月", "傾向", "最近", "トレンド"]):
+        recent = monthly.tail(3)
+        lines = "\n".join([f"- {str(p)}: {v:.1f}%" for p, v in recent.items()])
+        return f"**直近3ヶ月の受注率推移**\n\n{lines}"
+
+    if any(k in p for k in ["改善", "提案", "アドバイス", "おすすめ"]):
+        best_cat = cat_rates.index[0]
+        worst_cat = cat_rates.index[-1]
+        best_area = area_rates.index[0]
+        return (
+            f"**受注率改善の提案**\n\n"
+            f"1. **{best_cat}** への注力 — 受注率 {cat_rates.iloc[0]*100:.1f}% と最高です。\n"
+            f"2. **{best_area}** エリアへの集中 — 受注率が高いエリアです。\n"
+            f"3. **{worst_cat}** の見直し — 受注率 {cat_rates.iloc[-1]*100:.1f}% と改善余地があります。"
+        )
+
+    # デフォルト: 概要を返す
+    return (
+        f"現在のデータ概要をお伝えします。\n\n{context}\n\n"
+        "もう少し具体的な質問（工事種別・エリア・金額・改善提案など）をいただけると詳しく回答できます。"
+    )
+
+
+# ─────────────────────────────────────────
 # サイドバー：データ読み込み設定
 # ─────────────────────────────────────────
 
@@ -248,7 +319,7 @@ with st.sidebar:
             df_raw = generate_sample_data()
     else:
         df_raw = generate_sample_data()
-        st.info("サンプルデータ（300件）を使用中")
+        st.info("サンプルデータ（500件）を使用中")
 
     st.divider()
 
@@ -779,56 +850,3 @@ with tab5:
     if st.button("🔄 会話をリセット", key="reset_chat"):
         st.session_state.agent_messages = []
         st.rerun()
-
-
-def _agent_answer(prompt: str, context: str, df) -> str:
-    """
-    ルールベースの簡易エージェント回答。
-    API連携なしでデータから直接回答を生成する。
-    """
-    p = prompt.lower()
-
-    win_rate = df["result"].mean() * 100
-    cat_rates = df.groupby("category")["result"].mean().sort_values(ascending=False)
-    area_rates = df.groupby("area")["result"].mean().sort_values(ascending=False)
-    monthly = df.groupby(df["date"].dt.to_period("M"))["result"].mean() * 100
-
-    if any(k in p for k in ["工事種別", "種別", "カテゴリ", "category"]):
-        lines = "\n".join([f"- {c}: {r*100:.1f}%" for c, r in cat_rates.items()])
-        return f"**工事種別ごとの受注率**\n\n{lines}\n\n最も高いのは **{cat_rates.index[0]}** です。"
-
-    if any(k in p for k in ["エリア", "地域", "area"]):
-        lines = "\n".join([f"- {a}: {r*100:.1f}%" for a, r in area_rates.items()])
-        return f"**エリアごとの受注率**\n\n{lines}\n\n最も高いのは **{area_rates.index[0]}** です。"
-
-    if any(k in p for k in ["金額", "見積", "amount", "価格"]):
-        low = df[df["amount"] < df["amount"].median()]["result"].mean() * 100
-        high = df[df["amount"] >= df["amount"].median()]["result"].mean() * 100
-        return (
-            f"**見積金額と受注率の関係**\n\n"
-            f"- 中央値未満: {low:.1f}%\n"
-            f"- 中央値以上: {high:.1f}%\n\n"
-            f"{'低価格帯' if low > high else '高価格帯'}の方が受注率が高い傾向にあります。"
-        )
-
-    if any(k in p for k in ["今月", "傾向", "最近", "トレンド"]):
-        recent = monthly.tail(3)
-        lines = "\n".join([f"- {str(p)}: {v:.1f}%" for p, v in recent.items()])
-        return f"**直近3ヶ月の受注率推移**\n\n{lines}"
-
-    if any(k in p for k in ["改善", "提案", "アドバイス", "おすすめ"]):
-        best_cat = cat_rates.index[0]
-        worst_cat = cat_rates.index[-1]
-        best_area = area_rates.index[0]
-        return (
-            f"**受注率改善の提案**\n\n"
-            f"1. **{best_cat}** への注力 — 受注率 {cat_rates.iloc[0]*100:.1f}% と最高です。\n"
-            f"2. **{best_area}** エリアへの集中 — 受注率が高いエリアです。\n"
-            f"3. **{worst_cat}** の見直し — 受注率 {cat_rates.iloc[-1]*100:.1f}% と改善余地があります。"
-        )
-
-    # デフォルト: 概要を返す
-    return (
-        f"現在のデータ概要をお伝えします。\n\n{context}\n\n"
-        "もう少し具体的な質問（工事種別・エリア・金額・改善提案など）をいただけると詳しく回答できます。"
-    )
