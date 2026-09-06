@@ -62,10 +62,11 @@ def generate_sample_data(n: int = 300) -> pd.DataFrame:
     }
     dates = []
     for cat in categories:
-        w = np.array(month_weights[cat], dtype=float)
+        w = np.array(month_weights.get(cat, [1] * 12), dtype=float)
         month = np.random.choice(np.arange(1, 13), p=w / w.sum())
         year = np.random.randint(2022, 2025)
-        day = np.random.randint(1, 29)  # 月末日の扱いを避けるため 1〜28 日
+        days_in_month = pd.Period(f"{year}-{month:02d}").days_in_month
+        day = np.random.randint(1, days_in_month + 1)  # 月末日（29〜31日）も出るようにする
         dates.append(pd.Timestamp(year=year, month=month, day=day))
 
     # エリア
@@ -96,11 +97,11 @@ def generate_sample_data(n: int = 300) -> pd.DataFrame:
         elif cat == "電気工事":
             prob += 0.05
 
-        # 季節補正（繁忙期は受注しやすい）
-        if cat == "太陽光" and 3 <= dt.month <= 6:
-            prob += 0.06
-        elif cat == "電気工事" and 1 <= dt.month <= 3:
-            prob += 0.06
+        # 季節補正（繁忙期 +0.08 / 閑散期 -0.04。差 12pt でモデルが季節性を学習できる強さにする）
+        if cat == "太陽光":
+            prob += 0.08 if 3 <= dt.month <= 6 else -0.04
+        elif cat == "電気工事":
+            prob += 0.08 if 1 <= dt.month <= 3 else -0.04
 
         # エリア補正
         if area == "東京":
