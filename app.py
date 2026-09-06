@@ -39,7 +39,7 @@ st.caption("電気工事・太陽光パネル設置の受注確率・売上予�
 # サンプルデータ生成
 # ─────────────────────────────────────────
 
-def generate_sample_data(n: int = 300) -> pd.DataFrame:
+def generate_sample_data(n: int = 500) -> pd.DataFrame:
     """
     電気工事・太陽光案件らしいリアルなサンプルデータを生成する。
     実際のCSVがない場合の代替データとして使用。
@@ -319,7 +319,7 @@ with st.sidebar:
             df_raw = generate_sample_data()
     else:
         df_raw = generate_sample_data()
-        st.info("サンプルデータ（300件）を使用中")
+        st.info("サンプルデータ（500件）を使用中")
 
     st.divider()
 
