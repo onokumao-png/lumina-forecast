@@ -46,19 +46,27 @@ def generate_sample_data(n: int = 300) -> pd.DataFrame:
     """
     np.random.seed(42)
 
-    # 見積提出日（2022年1月〜2024年12月）
-    start = pd.Timestamp("2022-01-01")
-    end = pd.Timestamp("2024-12-31")
-    dates = pd.to_datetime(
-        np.random.randint(start.value, end.value, size=n)
-    )
-
-    # 工事種別
+    # 工事種別（日付の季節性がカテゴリに依存するため先に決める）
     categories = np.random.choice(
         ["電気工事", "太陽光", "その他"],
         size=n,
         p=[0.45, 0.40, 0.15],
     )
+
+    # 見積提出日（2022年1月〜2024年12月）
+    # カテゴリ別の月重み: 太陽光は春〜初夏（3〜6月）、電気工事は年度末（1〜3月）に集中
+    month_weights = {
+        "太陽光":   [1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1],
+        "電気工事": [1.8, 1.8, 1.8, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        "その他":   [1] * 12,
+    }
+    dates = []
+    for cat in categories:
+        w = np.array(month_weights[cat], dtype=float)
+        month = np.random.choice(np.arange(1, 13), p=w / w.sum())
+        year = np.random.randint(2022, 2025)
+        day = np.random.randint(1, 29)  # 月末日の扱いを避けるため 1〜28 日
+        dates.append(pd.Timestamp(year=year, month=month, day=day))
 
     # エリア
     areas = np.random.choice(
@@ -77,9 +85,9 @@ def generate_sample_data(n: int = 300) -> pd.DataFrame:
         else:
             amounts.append(int(np.random.lognormal(12.8, 0.7)))  # 30万〜200万円程度
 
-    # 受注確率のロジック（金額・カテゴリ・エリアに依存）
+    # 受注確率のロジック（金額・カテゴリ・エリア・季節に依存）
     results = []
-    for cat, area, amt in zip(categories, areas, amounts):
+    for cat, area, amt, dt in zip(categories, areas, amounts, dates):
         prob = 0.50  # ベース確率
 
         # カテゴリ補正
@@ -87,6 +95,12 @@ def generate_sample_data(n: int = 300) -> pd.DataFrame:
             prob += 0.10
         elif cat == "電気工事":
             prob += 0.05
+
+        # 季節補正（繁忙期は受注しやすい）
+        if cat == "太陽光" and 3 <= dt.month <= 6:
+            prob += 0.06
+        elif cat == "電気工事" and 1 <= dt.month <= 3:
+            prob += 0.06
 
         # エリア補正
         if area == "東京":
