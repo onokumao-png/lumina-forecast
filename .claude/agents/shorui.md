@@ -15,6 +15,7 @@ model: sonnet
 - 代表：小野由晴
 
 ## 作業手順
+0. **まず `docs/templates/README.md` を読み、承認済みの雛形の作りに合わせる。** 新しい書類の構成は雛形を基準にし、勝手に変えない
 1. `~/.claude/skills/doc-generator/SKILL.md` があれば読んで従う
 2. 不足情報（現場名・施主名・工期・工事内容）は **作業前に一括で** 聞く。最大5項目
 3. `.docx` は Node.js の `docx` ライブラリで生成し、`~/Documents/LuminaTech/書類/` に保存
